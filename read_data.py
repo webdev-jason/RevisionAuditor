@@ -1,8 +1,7 @@
 import openpyxl
 import os
 
-# --- 1. CONFIGURATION: The Maps ---
-# This tells the code which cells to look at for each customer.
+# --- CONFIGURATION: The Maps ---
 CUSTOMER_MAPS = {
     "Kinnex": ["A3:A23", "G7:G21"],
     "Quattro": ["A3:A32", "G7:G8", "G12:G22"]
@@ -53,13 +52,11 @@ def get_links_from_excel(file_path, customer_name):
 
 if __name__ == "__main__":
     # --- TEST ZONE ---
-    # I have matched these filenames to your screenshot.
     
     # TEST 1: Run Kinnex
     print("\nTESTING KINNEX:")
-    get_links_from_excel("Kinnex Revision Checker.xlsm", "Kinnex")
+    get_links_from_excel("Kinnex Revision Source.xlsx", "Kinnex")
     
     # TEST 2: Run Quattro
-    # (This one runs right after, so we test both at once!)
     print("\nTESTING QUATTRO:")
-    get_links_from_excel("Quattro Revision Checker.xlsm", "Quattro")
+    get_links_from_excel("Quattro Revision Source.xlsx", "Quattro")

@@ -1,7 +1,7 @@
 from playwright.sync_api import sync_playwright
 from read_data import get_links_from_excel
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Font
 import os
 
 # --- CORE FUNCTIONS ---
@@ -44,9 +44,12 @@ def scan_links(page, links, customer_name):
             
     return broken_cells
 
-def generate_report(source_filename, customer_name, broken_cells):
+def generate_report(source_filename, customer_name, all_links, broken_cells):
     """
-    Opens the source file, highlights broken links in Yellow, saves new report.
+    Opens the source file:
+    1. Removes hyperlinks from all scanned cells and makes text black.
+    2. Highlights broken links in Yellow and clears their text.
+    3. Saves as 'Customer Revisions.xlsx'.
     """
     print(f"Generating Report for {customer_name}...")
     
@@ -58,21 +61,34 @@ def generate_report(source_filename, customer_name, broken_cells):
     wb = load_workbook(source_filename, data_only=False)
     ws = wb.active
     
-    # Highlight Style
+    # Styles
     yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    black_font = Font(color="000000")
     
+    # 1. CLEANUP: Remove hyperlinks and set text to black for ALL links found
+    for item in all_links:
+        cell = ws[item['cell']]
+        cell.hyperlink = None  # Remove the link
+        cell.font = black_font # Set text color to black
+    
+    # 2. PROCESS BROKEN LINKS: Highlight and Clear Text
     count = 0
     for cell_addr in broken_cells:
-        # Highlight the Revision Letter cell (Column + 1)
+        # Get the Revision Letter cell (Column + 1)
         link_cell = ws[cell_addr]
         rev_cell = link_cell.offset(column=1)
+        
+        # Clear the text
+        rev_cell.value = ""
+        # Highlight Yellow
         rev_cell.fill = yellow_fill
+        
         count += 1
         
     # Save
-    output_filename = f"{customer_name}_Audit_Report.xlsx"
+    output_filename = f"{customer_name} Revisions.xlsx"
     wb.save(output_filename)
-    print(f" -> Saved: {output_filename} ({count} flags)")
+    print(f" -> Saved: {output_filename} ({count} broken links cleared & highlighted)")
 
 
 # --- MAIN EXECUTION FLOW ---
@@ -83,8 +99,9 @@ def run_daily_audit():
     print("="*50)
 
     # 1. PREPARE DATA
-    file_kinnex = "Kinnex Revision Checker.xlsm"
-    file_quattro = "Quattro Revision Checker.xlsm"
+    # UPDATED FILENAMES TO MATCH YOUR SCREENSHOT:
+    file_kinnex = "Kinnex Revision Source.xlsx"
+    file_quattro = "Quattro Revision Source.xlsx"
     
     links_kinnex = get_links_from_excel(file_kinnex, "Kinnex")
     links_quattro = get_links_from_excel(file_quattro, "Quattro")
@@ -126,9 +143,9 @@ def run_daily_audit():
     # 3. GENERATE REPORTS
     print("\n" + "-"*30)
     if links_kinnex:
-        generate_report(file_kinnex, "Kinnex", kinnex_broken)
+        generate_report(file_kinnex, "Kinnex", links_kinnex, kinnex_broken)
     if links_quattro:
-        generate_report(file_quattro, "Quattro", quattro_broken)
+        generate_report(file_quattro, "Quattro", links_quattro, quattro_broken)
     print("-"*30)
     print("ALL AUDITS COMPLETE.")
 

@@ -1,4 +1,5 @@
 # Ignore generated reports
+*Revisions.xlsx
 *_Audit_Report.xlsx
 
 # Ignore Python cache files
