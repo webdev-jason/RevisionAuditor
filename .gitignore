@@ -1,6 +1,14 @@
-# Ignore generated reports
+# --- Generated Reports (Output) ---
 *Revisions.xlsx
 *_Audit_Report.xlsx
 
-# Ignore Python cache files
+# --- Python Junk ---
 __pycache__/
+
+# --- PyInstaller Build Artifacts ---
+build/
+dist/
+*.spec
+
+# --- VS Code Settings (Optional but good practice) ---
+.vscode/
