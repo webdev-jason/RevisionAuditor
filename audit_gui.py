@@ -18,7 +18,6 @@ if getattr(sys, 'frozen', False):
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-# Using the protected folder name
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(base_path, "_sys_core")
 
 # --- WORKER THREAD (The Engine) ---
@@ -27,6 +26,7 @@ class AuditWorker(QThread):
     progress_update = pyqtSignal(int)
     finished = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
+    validation_failed = pyqtSignal(str) 
 
     def __init__(self):
         super().__init__()
@@ -69,28 +69,41 @@ class AuditWorker(QThread):
                 except:
                     pass
 
-                # 3. WAIT FOR USER LOGIN
-                self.status_update.emit("WAITING: Log in to Laserfiche, then click START.")
-                while not self.start_permission:
-                    if not self.is_running: 
-                        browser.close()
-                        self.finished.emit("User Aborted Audit.")
-                        return
-                    time.sleep(0.5)
+                # --- THE RETRY LOOP ---
+                while self.is_running:
+                    
+                    # A. WAIT FOR USER START
+                    self.status_update.emit("WAITING: Log in to Laserfiche, then click START.")
+                    while not self.start_permission:
+                        if not self.is_running: break # Handle Abort
+                        time.sleep(0.5)
 
-                # --- NEW: THE "BOUNCER" CHECK ---
-                # Check if we are still on a login page BEFORE running
-                page_title = page.title().lower()
-                current_url = page.url.lower()
+                    if not self.is_running: break # Exit if Abort was clicked
 
-                # Keywords that indicate the user failed to log in
-                if "login" in page_title or "sign in" in page_title or "login" in current_url:
-                    self.error_occurred.emit("LOGIN DETECTED: You must log in to Laserfiche before clicking Start.")
+                    # B. VALIDATE LOGIN (The Bouncer)
+                    try:
+                        page_title = page.title().lower()
+                        current_url = page.url.lower()
+
+                        if "login" in page_title or "sign in" in page_title or "login" in current_url:
+                            # FAIL: Don't close browser. Just reset the GUI and wait again.
+                            self.validation_failed.emit("Login Screen Detected!\n\nPlease log in to Laserfiche, then click 'START AUDIT' again.")
+                            self.start_permission = False # Reset permission flag
+                            continue # Jump back to step A (Wait loop)
+                    except:
+                        pass 
+
+                    # If we passed validation, BREAK the retry loop and start scanning
+                    break 
+                # ----------------------
+
+                # CHECK IF ABORTED BEFORE SCAN
+                if not self.is_running:
                     browser.close()
+                    self.finished.emit("User Aborted Audit.")
                     return
-                # --------------------------------
 
-                # 4. START SCANNING
+                # 3. START SCANNING
                 self.status_update.emit("Audit Started...")
                 processed_count = 0
                 
@@ -112,7 +125,7 @@ class AuditWorker(QThread):
                     self.finished.emit("User Aborted Audit.")
                     return
 
-                # 5. GENERATE REPORTS
+                # 4. GENERATE REPORTS
                 self.status_update.emit("Generating Reports...")
                 
                 if links_kinnex:
@@ -140,8 +153,7 @@ class AuditWorker(QThread):
                 page.wait_for_load_state("domcontentloaded")
                 title = page.title()
                 
-                # REINFORCED CHECK: If we hit a login page mid-scan, count it as "Dead/Broken"
-                # This handles session timeouts
+                # REINFORCED CHECK: If we hit a login page mid-scan, count it as "Dead"
                 title_lower = title.lower()
                 if "entry not found" in title_lower or "404" in title_lower or "login" in title_lower:
                     is_dead = True
@@ -251,6 +263,7 @@ class AuditDashboard(QMainWindow):
         self.worker.progress_update.connect(self.progress.setValue)
         self.worker.finished.connect(self.on_finished)
         self.worker.error_occurred.connect(self.on_error)
+        self.worker.validation_failed.connect(self.on_validation_failed) 
         
         self.worker.start()
         
@@ -272,9 +285,28 @@ class AuditDashboard(QMainWindow):
         self.worker.set_start_permission()
 
     def on_stop_click(self):
-        self.worker.stop()
         self.lbl_status.setText("Aborting...")
         self.btn_stop.setEnabled(False)
+        self.btn_start.setEnabled(False)
+        self.worker.stop()
+
+    def on_validation_failed(self, msg):
+        QMessageBox.warning(self, "Login Required", msg)
+        
+        self.lbl_status.setText("Waiting for Login...")
+        self.btn_start.setText("START AUDIT")
+        self.btn_start.setEnabled(True)
+        self.btn_start.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32; 
+                color: white; 
+                font-size: 16px; 
+                font-weight: bold;
+                padding: 15px;
+                border-radius: 5px;
+            }
+            QPushButton:hover { background-color: #1b5e20; }
+        """)
 
     def on_finished(self, msg):
         self.lbl_status.setText(msg)
@@ -293,26 +325,7 @@ class AuditDashboard(QMainWindow):
     def on_error(self, msg):
         self.lbl_status.setText("Error!")
         QMessageBox.critical(self, "Error", msg)
-        
-        # Reset the button so they can try again
-        self.btn_start.setText("START AUDIT")
-        self.btn_start.setEnabled(True)
-        self.btn_start.setStyleSheet("""
-            QPushButton {
-                background-color: #2e7d32; 
-                color: white; 
-                font-size: 16px; 
-                font-weight: bold;
-                padding: 15px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #1b5e20; }
-        """)
-        
-        # NOTE: In this specific architecture, if the worker thread hits "browser.close()", 
-        # the thread might finish. If so, we might need to restart the worker logic or 
-        # restart the app. The simplest UX for "Failed Login" is "Restart App".
-        # But for now, the critical alert stops the false positive.
+        self.on_finished("Error Occurred.")
 
     def closeEvent(self, event):
         self.worker.stop()
