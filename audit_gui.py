@@ -13,18 +13,16 @@ from openpyxl.styles import PatternFill, Font
 from datetime import datetime
 
 # --- CONFIGURATION ---
-# Fix for PyInstaller pathing
 if getattr(sys, 'frozen', False):
     base_path = os.path.dirname(sys.executable)
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-# CHANGED: Renamed 'browsers' to '_sys_core' to hide/protect it
+# Using the protected folder name
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(base_path, "_sys_core")
 
 # --- WORKER THREAD (The Engine) ---
 class AuditWorker(QThread):
-    # Signals to talk to the GUI
     status_update = pyqtSignal(str)
     progress_update = pyqtSignal(int)
     finished = pyqtSignal(str)
@@ -32,7 +30,7 @@ class AuditWorker(QThread):
 
     def __init__(self):
         super().__init__()
-        self.start_permission = False # Waits for user to click "Start"
+        self.start_permission = False 
         self.is_running = True
 
     def set_start_permission(self):
@@ -80,6 +78,18 @@ class AuditWorker(QThread):
                         return
                     time.sleep(0.5)
 
+                # --- NEW: THE "BOUNCER" CHECK ---
+                # Check if we are still on a login page BEFORE running
+                page_title = page.title().lower()
+                current_url = page.url.lower()
+
+                # Keywords that indicate the user failed to log in
+                if "login" in page_title or "sign in" in page_title or "login" in current_url:
+                    self.error_occurred.emit("LOGIN DETECTED: You must log in to Laserfiche before clicking Start.")
+                    browser.close()
+                    return
+                # --------------------------------
+
                 # 4. START SCANNING
                 self.status_update.emit("Audit Started...")
                 processed_count = 0
@@ -120,18 +130,20 @@ class AuditWorker(QThread):
         for i, item in enumerate(links):
             if not self.is_running: break
             
-            # Update GUI
             self.status_update.emit(f"Checking {name}: {item['text']}")
             progress_pct = int(((current_count + i) / total) * 100)
             self.progress_update.emit(progress_pct)
 
-            # Check Link
             is_dead = False
             try:
                 page.goto(item['url'])
                 page.wait_for_load_state("domcontentloaded")
                 title = page.title()
-                if "Entry not found" in title or "Application Error" in title or "404" in title:
+                
+                # REINFORCED CHECK: If we hit a login page mid-scan, count it as "Dead/Broken"
+                # This handles session timeouts
+                title_lower = title.lower()
+                if "entry not found" in title_lower or "404" in title_lower or "login" in title_lower:
                     is_dead = True
             except:
                 is_dead = True
@@ -167,7 +179,6 @@ class AuditWorker(QThread):
         if ws["K34"]: ws["K34"].value = now.strftime("%m/%d/%Y") 
         if ws["K35"]: ws["K35"].value = now.strftime("%I:%M %p")
         
-        # Save output
         output_path = os.path.join(base_path, f"{name} Revisions.xlsx")
         wb.save(output_path)
 
@@ -177,37 +188,30 @@ class AuditDashboard(QMainWindow):
         super().__init__()
         self.setWindowTitle("Revision Auditor")
         self.resize(400, 300) 
-        
-        # Keep window on top
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
 
-        # Layout
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout()
         layout.setSpacing(15)
         central.setLayout(layout)
 
-        # Title
         self.lbl_title = QLabel("Daily Revision Auditor")
         self.lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #333;")
         self.lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.lbl_title)
 
-        # Status Label
         self.lbl_status = QLabel("Initializing...")
         self.lbl_status.setStyleSheet("font-size: 14px; color: #555;")
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
-        # Progress Bar
         self.progress = QProgressBar()
         self.progress.setValue(0)
         self.progress.setStyleSheet("height: 25px;")
         layout.addWidget(self.progress)
 
-        # Start Button
         self.btn_start = QPushButton("START AUDIT")
         self.btn_start.setStyleSheet("""
             QPushButton {
@@ -225,7 +229,6 @@ class AuditDashboard(QMainWindow):
         self.btn_start.clicked.connect(self.on_start_click)
         layout.addWidget(self.btn_start)
 
-        # ABORT Button
         self.btn_stop = QPushButton("ABORT")
         self.btn_stop.setStyleSheet("""
             QPushButton {
@@ -243,21 +246,17 @@ class AuditDashboard(QMainWindow):
         self.btn_stop.clicked.connect(self.on_stop_click)
         layout.addWidget(self.btn_stop)
 
-        # Worker Thread Setup
         self.worker = AuditWorker()
         self.worker.status_update.connect(self.lbl_status.setText)
         self.worker.progress_update.connect(self.progress.setValue)
         self.worker.finished.connect(self.on_finished)
         self.worker.error_occurred.connect(self.on_error)
         
-        # Start Worker immediately to launch browser
         self.worker.start()
         
-        # Enable buttons after initialization
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(True) 
         
-        # Position
         self.center_and_offset()
 
     def center_and_offset(self):
@@ -285,7 +284,6 @@ class AuditDashboard(QMainWindow):
         self.btn_start.setStyleSheet("background-color: #1976d2; color: white; padding: 15px;")
         self.btn_start.setEnabled(True)
         
-        # Re-purpose Start button to Close
         try: self.btn_start.clicked.disconnect() 
         except: pass
         self.btn_start.clicked.connect(self.close)
@@ -295,7 +293,26 @@ class AuditDashboard(QMainWindow):
     def on_error(self, msg):
         self.lbl_status.setText("Error!")
         QMessageBox.critical(self, "Error", msg)
-        self.worker.stop()
+        
+        # Reset the button so they can try again
+        self.btn_start.setText("START AUDIT")
+        self.btn_start.setEnabled(True)
+        self.btn_start.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32; 
+                color: white; 
+                font-size: 16px; 
+                font-weight: bold;
+                padding: 15px;
+                border-radius: 5px;
+            }
+            QPushButton:hover { background-color: #1b5e20; }
+        """)
+        
+        # NOTE: In this specific architecture, if the worker thread hits "browser.close()", 
+        # the thread might finish. If so, we might need to restart the worker logic or 
+        # restart the app. The simplest UX for "Failed Login" is "Restart App".
+        # But for now, the critical alert stops the false positive.
 
     def closeEvent(self, event):
         self.worker.stop()
