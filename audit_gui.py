@@ -86,18 +86,15 @@ class AuditWorker(QThread):
                         current_url = page.url.lower()
 
                         if "login" in page_title or "sign in" in page_title or "login" in current_url:
-                            # FAIL: Don't close browser. Just reset the GUI and wait again.
                             self.validation_failed.emit("Login Screen Detected!\n\nPlease log in to Laserfiche, then click 'START AUDIT' again.")
-                            self.start_permission = False # Reset permission flag
-                            continue # Jump back to step A (Wait loop)
+                            self.start_permission = False 
+                            continue 
                     except:
                         pass 
 
-                    # If we passed validation, BREAK the retry loop and start scanning
                     break 
                 # ----------------------
 
-                # CHECK IF ABORTED BEFORE SCAN
                 if not self.is_running:
                     browser.close()
                     self.finished.emit("User Aborted Audit.")
@@ -120,7 +117,6 @@ class AuditWorker(QThread):
 
                 browser.close()
 
-                # CHECK IF ABORTED DURING SCAN
                 if not self.is_running:
                     self.finished.emit("User Aborted Audit.")
                     return
@@ -151,12 +147,27 @@ class AuditWorker(QThread):
             try:
                 page.goto(item['url'])
                 page.wait_for_load_state("domcontentloaded")
-                title = page.title()
                 
-                # REINFORCED CHECK: If we hit a login page mid-scan, count it as "Dead"
-                title_lower = title.lower()
-                if "entry not found" in title_lower or "404" in title_lower or "login" in title_lower:
+                # --- ROBUST CHECKING LOGIC ---
+                title = page.title().lower()
+                
+                # We check the visible text on the page as a backup
+                # This catches cases where the Title is generic (e.g. "Laserfiche") 
+                # but the page content says "Entry not found".
+                try:
+                    body_text = page.inner_text("body").lower()
+                except:
+                    body_text = ""
+
+                # THE KILL LIST: Any of these triggers a "Dead Link" status
+                if ("entry not found" in title or 
+                    "404" in title or 
+                    "login" in title or 
+                    "application error" in title or   # <--- Added based on screenshot
+                    "entry not found" in body_text):  # <--- Reading page content now
                     is_dead = True
+                # -----------------------------
+                
             except:
                 is_dead = True
             
