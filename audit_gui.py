@@ -4,6 +4,7 @@ import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QPushButton, QLabel, QProgressBar, QMessageBox)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtGui import QIcon # <-- NEW: Imported QIcon
 
 # --- LOGIC IMPORTS ---
 from playwright.sync_api import sync_playwright
@@ -14,9 +15,13 @@ from datetime import datetime
 
 # --- CONFIGURATION ---
 if getattr(sys, 'frozen', False):
+    # External files (Excel, Browsers) live next to the .exe
     base_path = os.path.dirname(sys.executable)
+    # Internal files bundled INSIDE the .exe (like the icon) unpack here
+    bundle_dir = sys._MEIPASS 
 else:
     base_path = os.path.dirname(os.path.abspath(__file__))
+    bundle_dir = base_path
 
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(base_path, "_sys_core")
 
@@ -62,7 +67,6 @@ class AuditWorker(QThread):
                 context = browser.new_context(no_viewport=True)
                 page = context.new_page()
 
-                # Go to login page
                 first_url = links_kinnex[0]['url'] if links_kinnex else links_quattro[0]['url']
                 try:
                     page.goto(first_url)
@@ -71,16 +75,13 @@ class AuditWorker(QThread):
 
                 # --- THE RETRY LOOP ---
                 while self.is_running:
-                    
-                    # A. WAIT FOR USER START
                     self.status_update.emit("WAITING: Log in to Laserfiche, then click START.")
                     while not self.start_permission:
-                        if not self.is_running: break # Handle Abort
+                        if not self.is_running: break 
                         time.sleep(0.5)
 
-                    if not self.is_running: break # Exit if Abort was clicked
+                    if not self.is_running: break 
 
-                    # B. VALIDATE LOGIN (The Bouncer)
                     try:
                         page_title = page.title().lower()
                         current_url = page.url.lower()
@@ -104,13 +105,11 @@ class AuditWorker(QThread):
                 self.status_update.emit("Audit Started...")
                 processed_count = 0
                 
-                # Scan Kinnex
                 kinnex_broken = []
                 if self.is_running and links_kinnex:
                     kinnex_broken = self.scan_list(page, links_kinnex, "Kinnex", processed_count, total_items)
                     processed_count += len(links_kinnex)
 
-                # Scan Quattro
                 quattro_broken = []
                 if self.is_running and links_quattro:
                     quattro_broken = self.scan_list(page, links_quattro, "Quattro", processed_count, total_items)
@@ -148,25 +147,18 @@ class AuditWorker(QThread):
                 page.goto(item['url'])
                 page.wait_for_load_state("domcontentloaded")
                 
-                # --- ROBUST CHECKING LOGIC ---
                 title = page.title().lower()
-                
-                # We check the visible text on the page as a backup
-                # This catches cases where the Title is generic (e.g. "Laserfiche") 
-                # but the page content says "Entry not found".
                 try:
                     body_text = page.inner_text("body").lower()
                 except:
                     body_text = ""
 
-                # THE KILL LIST: Any of these triggers a "Dead Link" status
                 if ("entry not found" in title or 
                     "404" in title or 
                     "login" in title or 
-                    "application error" in title or   # <--- Added based on screenshot
-                    "entry not found" in body_text):  # <--- Reading page content now
+                    "application error" in title or   
+                    "entry not found" in body_text):  
                     is_dead = True
-                # -----------------------------
                 
             except:
                 is_dead = True
@@ -185,19 +177,16 @@ class AuditWorker(QThread):
         yellow = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
         black_font = Font(color="000000")
         
-        # Cleanup
         for item in all_links:
             cell = ws[item['cell']]
             cell.hyperlink = None
             cell.font = black_font
             
-        # Highlight Broken
         for addr in broken_cells:
             rev_cell = ws[addr].offset(column=1)
             rev_cell.value = ""
             rev_cell.fill = yellow
 
-        # Stamp Date
         now = datetime.now()
         if ws["K34"]: ws["K34"].value = now.strftime("%m/%d/%Y") 
         if ws["K35"]: ws["K35"].value = now.strftime("%I:%M %p")
@@ -212,6 +201,10 @@ class AuditDashboard(QMainWindow):
         self.setWindowTitle("Revision Auditor")
         self.resize(400, 300) 
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        
+        # --- NEW: Set the Window Icon ---
+        icon_path = os.path.join(bundle_dir, "icon.ico")
+        self.setWindowIcon(QIcon(icon_path))
 
         central = QWidget()
         self.setCentralWidget(central)
